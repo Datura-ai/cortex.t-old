@@ -1,5 +1,6 @@
+from __future__ import annotations
+
 import asyncio
-import bittensor
 import concurrent
 import itertools
 import random
@@ -16,7 +17,7 @@ from starlette.types import Send
 
 from cortext.protocol import IsAlive, StreamPrompting, ImageResponse, Embeddings
 from cortext.metaclasses import ValidatorRegistryMeta
-from validators.services import BaseValidator, TextValidator
+from validators.services import BaseValidator, TextValidator, ImageValidator, VALIDATOR_STEP_TIME_INTERVAL
 from validators.config import bt_config
 from validators.services.bittensor import bt_validator as bt
 
@@ -199,12 +200,13 @@ class WeightSetter:
                 if not len(available_uids):
                     bt.logging.info("no available uids. so referesh network and continue.")
                     continue
-                selected_validator = self.select_validator()
-                uid_to_scores = await self.process_modality(selected_validator, available_uids)
-                if uid_to_scores is None:
+                selected_validator: TextValidator | ImageValidator = self.select_validator()
+                if not selected_validator.should_i_score():
                     bt.logging.info("We don't score this time.")
-                    await asyncio.sleep(300)
+                    await asyncio.sleep(VALIDATOR_STEP_TIME_INTERVAL)
                     continue
+
+                uid_to_scores = await self.process_modality(selected_validator, available_uids)
 
                 for uid, score in uid_to_scores.items():
                     self.total_scores[uid] += score
@@ -219,7 +221,7 @@ class WeightSetter:
                     )
 
                 # if we want to slow down the speed of the validator steps
-                await asyncio.sleep(300)
+                await asyncio.sleep(VALIDATOR_STEP_TIME_INTERVAL)
 
     @staticmethod
     def select_validator():
@@ -270,8 +272,6 @@ class WeightSetter:
         bt.logging.info(f"starting {selected_validator.__class__.__name__} get_and_score for {uid_list}")
         uid_scores_dict, scored_responses, responses = \
             await selected_validator.get_and_score(uid_list)
-        if uid_scores_dict is None:
-            return None
         wandb_data = await selected_validator.build_wandb_data(uid_scores_dict, responses)
         if self.config.wandb_on:
             wandb.log(wandb_data)
